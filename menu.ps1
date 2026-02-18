@@ -56,9 +56,6 @@ function Show-URLs {
             $conf[$parts[0].Trim()] = $parts[1].Trim()
         }
 
-    $cam1Stream = if ($conf["CAMERA1_STREAM"]) { $conf["CAMERA1_STREAM"] } else { "cam1" }
-    $cam2Stream = if ($conf["CAMERA2_STREAM"]) { $conf["CAMERA2_STREAM"] } else { "cam2" }
-
     $localIp = (
         Get-NetIPAddress -AddressFamily IPv4 |
         Where-Object {
@@ -70,11 +67,23 @@ function Show-URLs {
         Select-Object -First 1
     ).IPAddress
 
+    # Discover all cameras dynamically
+    $camList = [System.Collections.Generic.List[hashtable]]::new()
+    $idx = 1
+    while ($true) {
+        $name   = if ($conf["CAMERA${idx}_NAME"])   { $conf["CAMERA${idx}_NAME"]   } else { "" }
+        $stream = if ($conf["CAMERA${idx}_STREAM"]) { $conf["CAMERA${idx}_STREAM"] } else { "cam$idx" }
+        if (-not $name) { break }
+        $camList.Add(@{ Index = $idx; Stream = $stream })
+        $idx++
+    }
+
     Write-Host ""
-    Write-Host "  ZoneMinder stream URLs:" -ForegroundColor Cyan
+    Write-Host "  ZoneMinder stream URLs ($($camList.Count) camera(s)):" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "    Camera 1 : rtsp://${localIp}:8554/$cam1Stream" -ForegroundColor Green
-    Write-Host "    Camera 2 : rtsp://${localIp}:8554/$cam2Stream" -ForegroundColor Green
+    foreach ($c in $camList) {
+        Write-Host "    Camera $($c.Index) : rtsp://${localIp}:8554/$($c.Stream)" -ForegroundColor Green
+    }
     Write-Host ""
     Write-Host "  Source Type in ZoneMinder: FFmpeg" -ForegroundColor Gray
 }
