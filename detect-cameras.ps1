@@ -14,8 +14,12 @@ if (-not (Test-Path $ffmpeg)) {
 Write-Host "Querying DirectShow video devices via FFmpeg..."
 Write-Host ""
 
-# FFmpeg prints the device list to stderr; redirect stderr -> stdout to capture it
-$rawOutput = & $ffmpeg -list_devices true -f dshow -i dummy 2>&1 | Out-String
+# FFmpeg prints the device list to stderr; redirect stderr -> stdout to capture it.
+# FFmpeg always exits non-zero here (dummy input), so we suppress the NativeCommandError.
+$rawOutput = & {
+    $ErrorActionPreference = 'Continue'
+    & $ffmpeg -list_devices true -f dshow -i dummy 2>&1
+} | Out-String
 
 # Parse lines like:  [dshow @ 0x...] "My Camera Name" (video)
 $devices = [System.Collections.Generic.List[string]]::new()
