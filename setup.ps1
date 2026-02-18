@@ -10,96 +10,6 @@ if (-not (Test-Path $toolsDir)) {
 }
 
 # ---------------------------------------------------------------------------
-# Helper: download with a live progress bar
-# ---------------------------------------------------------------------------
-
-function Invoke-Download {
-    param (
-        [string]$Label,
-        [string]$Url,
-        [string]$OutFile
-    )
-
-    Write-Host "[$Label] Connecting..."
-
-    $webClient = New-Object System.Net.WebClient
-
-    # Track bytes received and show Write-Progress
-    $webClient.add_DownloadProgressChanged({
-        param($s, $e)
-        $pct     = $e.ProgressPercentage
-        $recvMB  = [math]::Round($e.BytesReceived   / 1MB, 1)
-        $totalMB = [math]::Round($e.TotalBytesToReceive / 1MB, 1)
-        $status  = if ($e.TotalBytesToReceive -gt 0) {
-            "$recvMB MB / $totalMB MB"
-        } else {
-            "$recvMB MB downloaded"
-        }
-        Write-Progress -Activity "Downloading $Label" -Status $status -PercentComplete $pct
-    })
-
-    # Use an async download so we can pump the event loop
-    $task = $webClient.DownloadFileTaskAsync($Url, $OutFile)
-
-    # Wait, processing events every 200 ms so progress callbacks fire
-    while (-not $task.IsCompleted) {
-        [System.Threading.Thread]::Sleep(200)
-    }
-
-    Write-Progress -Activity "Downloading $Label" -Completed
-
-    if ($task.IsFaulted) {
-        throw $task.Exception.InnerException
-    }
-
-    $webClient.Dispose()
-    Write-Host "[$Label] Download complete."
-}
-
-# ---------------------------------------------------------------------------
-# Helper: extract zip with progress
-# ---------------------------------------------------------------------------
-
-function Invoke-Extract {
-    param (
-        [string]$Label,
-        [string]$ZipPath,
-        [string]$Destination
-    )
-
-    Write-Host "[$Label] Extracting..."
-
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    $zip     = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
-    $total   = $zip.Entries.Count
-    $current = 0
-
-    foreach ($entry in $zip.Entries) {
-        $current++
-        $pct = [math]::Round(($current / $total) * 100)
-        Write-Progress -Activity "Extracting $Label" `
-                       -Status "$current / $total files" `
-                       -PercentComplete $pct
-
-        # Reproduce directory structure
-        $destPath = Join-Path $Destination $entry.FullName
-        $destDir  = Split-Path $destPath -Parent
-        if (-not (Test-Path $destDir)) {
-            New-Item -ItemType Directory -Path $destDir -Force | Out-Null
-        }
-
-        # Skip directory entries (no data to extract)
-        if (-not $entry.FullName.EndsWith('/')) {
-            [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $destPath, $true)
-        }
-    }
-
-    $zip.Dispose()
-    Write-Progress -Activity "Extracting $Label" -Completed
-    Write-Host "[$Label] Extraction complete."
-}
-
-# ---------------------------------------------------------------------------
 # FFmpeg
 # ---------------------------------------------------------------------------
 
@@ -111,8 +21,11 @@ $ffmpegUrl    = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/
 if (Test-Path $ffmpegBin) {
     Write-Host "[FFmpeg] Already installed at $ffmpegBin - skipping download."
 } else {
-    Invoke-Download -Label "FFmpeg" -Url $ffmpegUrl -OutFile $ffmpegZip
-    Invoke-Extract  -Label "FFmpeg" -ZipPath $ffmpegZip -Destination $toolsDir
+    Write-Host "[FFmpeg] Downloading full GPL build (may take a few minutes)..."
+    Invoke-WebRequest -Uri $ffmpegUrl -OutFile $ffmpegZip -UseBasicParsing
+
+    Write-Host "[FFmpeg] Extracting..."
+    Expand-Archive -Path $ffmpegZip -DestinationPath $toolsDir -Force
 
     # The zip extracts to a dated folder name like "ffmpeg-master-latest-win64-gpl"
     $extracted = Get-ChildItem $toolsDir -Directory |
@@ -152,17 +65,16 @@ if (Test-Path $mediamtxExe) {
         exit 1
     }
 
+    Write-Host "[MediaMTX] Downloading $($release.tag_name) from $($asset.browser_download_url)..."
+    Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $mediamtxZip -UseBasicParsing
+
+    Write-Host "[MediaMTX] Extracting..."
     if (-not (Test-Path $mediamtxDir)) {
         New-Item -ItemType Directory -Path $mediamtxDir | Out-Null
     }
-
-    Invoke-Download -Label "MediaMTX $($release.tag_name)" `
-                    -Url $asset.browser_download_url `
-                    -OutFile $mediamtxZip
-
-    Invoke-Extract  -Label "MediaMTX" -ZipPath $mediamtxZip -Destination $mediamtxDir
-
+    Expand-Archive -Path $mediamtxZip -DestinationPath $mediamtxDir -Force
     Remove-Item $mediamtxZip
+
     Write-Host "[MediaMTX] Installed at $mediamtxExe"
 }
 
