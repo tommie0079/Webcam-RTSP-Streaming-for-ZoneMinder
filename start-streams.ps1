@@ -88,7 +88,7 @@ $ymlLines.Add("logDestinations: [stdout]")
 $ymlLines.Add("")
 $ymlLines.Add("rtsp: yes")
 $ymlLines.Add("rtspAddress: :8554")
-$ymlLines.Add("rtspEncryption: no")
+$ymlLines.Add('rtspEncryption: "no"')
 $ymlLines.Add("")
 $ymlLines.Add("rtmp: no")
 $ymlLines.Add("hls: no")
@@ -124,7 +124,7 @@ function Build-FFmpegArgs {
     if ($framerate)  { $args.AddRange([string[]]@("-framerate",  $framerate))  }
 
     $args.AddRange([string[]]@(
-        "-i", "video=$CameraName",
+        "-i", "`"video=$CameraName`"",
 
         # H.264 encoding - visually lossless quality
         "-c:v", "libx264",
@@ -134,6 +134,7 @@ function Build-FFmpegArgs {
         "-maxrate", "${maxrate}k",  # bitrate cap for network headroom
         "-bufsize", "$([int]$maxrate * 2)k",
         "-pix_fmt", "yuv420p",      # broadest decoder compatibility
+        "-an",                          # no audio - avoids dshow audio device errors
 
         # RTSP output to MediaMTX
         "-f", "rtsp",
@@ -148,18 +149,39 @@ function Build-FFmpegArgs {
 # Start MediaMTX
 # ---------------------------------------------------------------------------
 
+# mediamtx.yml lives in the same folder as the exe.
+# Launch MediaMTX with that folder as working directory and no path argument
+# so it auto-discovers mediamtx.yml - this avoids passing a path with
+# spaces or special characters (å, ø, etc.) on the command line.
+$mediamtxDir  = Split-Path $mediamtxExe -Parent
+$mediamtxLog  = "$mediamtxDir\mediamtx.log"
+
 Write-Host "[MediaMTX] Starting RTSP server..."
 $mediamtxProc = Start-Process `
     -FilePath $mediamtxExe `
-    -ArgumentList @($mediamtxYml) `
+    -WorkingDirectory $mediamtxDir `
+    -RedirectStandardOutput $mediamtxLog `
+    -RedirectStandardError  "$mediamtxDir\mediamtx-err.log" `
     -PassThru `
-    -WindowStyle Normal
+    -NoNewWindow
 
 Start-Sleep -Seconds 2
 
 if ($mediamtxProc.HasExited) {
     Write-Host ""
     Write-Host "ERROR: MediaMTX exited immediately." -ForegroundColor Red
+    # Show the actual log so the user knows the real reason
+    if (Test-Path $mediamtxLog) {
+        Write-Host ""
+        Write-Host "--- mediamtx output ---" -ForegroundColor DarkGray
+        Get-Content $mediamtxLog | Select-Object -Last 20 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
+        $errLog = "$mediamtxDir\mediamtx-err.log"
+        if ((Test-Path $errLog) -and (Get-Item $errLog).Length -gt 0) {
+            Get-Content $errLog | Select-Object -Last 10 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
+        }
+        Write-Host "--- end of log ---" -ForegroundColor DarkGray
+    }
+    Write-Host ""
     Write-Host "Possible causes:" -ForegroundColor Yellow
     Write-Host "  - Port 8554 is already in use (another MediaMTX still running?)" -ForegroundColor Yellow
     Write-Host "  - mediamtx.yml could not be read" -ForegroundColor Yellow
@@ -179,13 +201,17 @@ $ffmpegProcs = [System.Collections.Generic.List[hashtable]]::new()
 
 foreach ($cam in $cameras) {
     $args = Build-FFmpegArgs -CameraName $cam.Name -StreamPath $cam.Stream
+    $logOut = "$mediamtxDir\ffmpeg-cam$($cam.Index)-out.log"
+    $logErr = "$mediamtxDir\ffmpeg-cam$($cam.Index)-err.log"
     Write-Host "[Camera $($cam.Index)] Starting: $($cam.Name)  ->  rtsp://localhost:8554/$($cam.Stream)"
     $proc = Start-Process `
         -FilePath $ffmpeg `
         -ArgumentList $args `
         -PassThru `
-        -WindowStyle Normal
-    $ffmpegProcs.Add(@{ Name = "Camera $($cam.Index)"; Proc = $proc })
+        -NoNewWindow `
+        -RedirectStandardOutput $logOut `
+        -RedirectStandardError  $logErr
+    $ffmpegProcs.Add(@{ Name = "Camera $($cam.Index)"; Proc = $proc; LogOut = $logOut; LogErr = $logErr; Reported = $false })
     Start-Sleep -Milliseconds 800
 }
 
@@ -228,15 +254,21 @@ Write-Host ""
 # ---------------------------------------------------------------------------
 
 $procs = [System.Collections.Generic.List[hashtable]]::new()
-$procs.Add(@{ Name = "MediaMTX"; Proc = $mediamtxProc })
+$procs.Add(@{ Name = "MediaMTX"; Proc = $mediamtxProc; LogErr = $mediamtxLog; Reported = $false })
 foreach ($fp in $ffmpegProcs) { $procs.Add($fp) }
 
 try {
     while ($true) {
         Start-Sleep -Seconds 5
         foreach ($entry in $procs) {
-            if ($entry.Proc.HasExited) {
+            if ($entry.Proc.HasExited -and -not $entry.Reported) {
+                $entry.Reported = $true
                 Write-Warning "$($entry.Name) (PID $($entry.Proc.Id)) exited unexpectedly (code $($entry.Proc.ExitCode))."
+                if ($entry.LogErr -and (Test-Path $entry.LogErr)) {
+                    Write-Host "--- $($entry.Name) output (last 30 lines) ---" -ForegroundColor DarkGray
+                    Get-Content $entry.LogErr | Select-Object -Last 30 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
+                    Write-Host "--- end of log ---" -ForegroundColor DarkGray
+                }
             }
         }
     }
