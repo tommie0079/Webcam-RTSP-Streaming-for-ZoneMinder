@@ -7,7 +7,8 @@ $ErrorActionPreference = "Stop"
 $scriptDir    = $PSScriptRoot
 $ffmpeg       = "$scriptDir\tools\ffmpeg\bin\ffmpeg.exe"
 $mediamtxExe  = "$scriptDir\tools\mediamtx\mediamtx.exe"
-$mediamtxYml  = "$scriptDir\mediamtx.yml"
+# Store mediamtx.yml next to the exe so the path is free of spaces/special chars
+$mediamtxYml  = "$scriptDir\tools\mediamtx\mediamtx.yml"
 $confFile     = "$scriptDir\cameras.conf"
 
 # ---------------------------------------------------------------------------
@@ -16,7 +17,13 @@ $confFile     = "$scriptDir\cameras.conf"
 
 foreach ($f in @($ffmpeg, $mediamtxExe, $confFile)) {
     if (-not (Test-Path $f)) {
-        Write-Error "Missing required file: $f`nMake sure you have run setup.ps1 and detect-cameras.ps1 first."
+        Write-Host ""
+        Write-Host "ERROR: Missing required file:" -ForegroundColor Red
+        Write-Host "  $f" -ForegroundColor Red
+        Write-Host "Make sure you have run setup.ps1 and detect-cameras.ps1 first." -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "Press Enter to close..."
+        Read-Host | Out-Null
         exit 1
     }
 }
@@ -57,7 +64,12 @@ while ($true) {
 }
 
 if ($cameras.Count -eq 0) {
-    Write-Error "No CAMERA1_NAME found in cameras.conf. Run detect-cameras.ps1 first."
+    Write-Host ""
+    Write-Host "ERROR: No CAMERA1_NAME found in cameras.conf." -ForegroundColor Red
+    Write-Host "Run detect-cameras.ps1 first." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "Press Enter to close..."
+    Read-Host | Out-Null
     exit 1
 }
 
@@ -146,7 +158,15 @@ $mediamtxProc = Start-Process `
 Start-Sleep -Seconds 2
 
 if ($mediamtxProc.HasExited) {
-    Write-Error "MediaMTX exited immediately. Check the MediaMTX window for errors."
+    Write-Host ""
+    Write-Host "ERROR: MediaMTX exited immediately." -ForegroundColor Red
+    Write-Host "Possible causes:" -ForegroundColor Yellow
+    Write-Host "  - Port 8554 is already in use (another MediaMTX still running?)" -ForegroundColor Yellow
+    Write-Host "  - mediamtx.yml could not be read" -ForegroundColor Yellow
+    Write-Host "  - Antivirus blocked mediamtx.exe" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "Press Enter to close..."
+    Read-Host | Out-Null
     exit 1
 }
 Write-Host "[MediaMTX] Running (PID $($mediamtxProc.Id))"
@@ -230,5 +250,8 @@ finally {
             Stop-Process -Id $entry.Proc.Id -Force -ErrorAction SilentlyContinue
         }
     }
-    Write-Host "All stopped. Goodbye."
+    Write-Host "All stopped."
+    Write-Host ""
+    Write-Host "Press Enter to close..."
+    Read-Host | Out-Null
 }
