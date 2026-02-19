@@ -123,6 +123,47 @@ OK      Logitech Webcam C930e  USB\VID_046D&PID_0843\...
 
 ---
 
+## Logitech C930e has no driver in Windows IoT LTSC
+
+**Symptom:** Device Manager shows the C930e with a yellow triangle, or `Get-PnpDevice`
+returns no camera even though USB passthrough is confirmed working.
+
+**Cause:** Windows 11 IoT LTSC strips out camera-related OS components by default.
+The C930e is a standard UVC webcam and uses the Windows inbox `USB Video Device` driver —
+no third-party driver needed — but the UVC stack may be missing or disabled.
+
+**Step 1 — Check if the device is visible at all:**
+```powershell
+Get-PnpDevice | Where-Object { $_.Class -eq 'Camera' -or $_.InstanceId -like '*046D*' } |
+    Select-Object Status, FriendlyName, InstanceId
+```
+
+**Step 2 — Add the missing camera capability (IoT LTSC strips this):**
+```powershell
+DISM /Online /Add-Capability /CapabilityName:Media.Streaming~~~~0.0.1.0
+```
+
+**Step 3 — Force install the inbox UVC driver and rescan:**
+```powershell
+pnputil /add-driver C:\Windows\INF\usbvideo.inf /install
+pnputil /scan-devices
+```
+
+**Step 4 — Check Windows Update for the driver:**
+```powershell
+$Session = New-Object -ComObject Microsoft.Update.Session
+$Searcher = $Session.CreateUpdateSearcher()
+$Results = $Searcher.Search("IsInstalled=0 and Type='Driver'")
+$Results.Updates | Select-Object Title
+```
+
+Reboot after any of the above steps, then re-check Device Manager.
+
+> If the device still has issues after installing the driver, refer to the
+> **"Camera shows Error on parent device"** section above for USB passthrough fixes.
+
+---
+
 ## Camera visible in FFmpeg but not in Windows Settings
 
 **Symptom:** `ffmpeg -list_devices` shows the camera, but Bluetooth & Devices > Cameras is empty.
