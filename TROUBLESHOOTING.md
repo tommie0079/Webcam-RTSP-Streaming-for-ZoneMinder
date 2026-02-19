@@ -81,10 +81,12 @@ pnputil /scan-devices
 ```
 Status  FriendlyName                       InstanceId
 ------  ------------                       ----------
-Unknown Logitech Webcam C930e              USB\VID_046D&PID_0843&MI_02\...
-Unknown Logitech Webcam C930e              USB\VID_046D&PID_0843&MI_00\...
+Unknown Logitech Webcam C930e              USB\VID_046D&PID_0843&MI_02\8&D8A42FE&0&0002
+Unknown Logitech Webcam C930e              USB\VID_046D&PID_0843&MI_00\8&D8A42FE&0&0000
 Error   Logitech USB Camera (Webcam C930e) USB\VID_046D&PID_0843\7B27991E
 ```
+
+> **Note:** The other cameras (e.g. Lenovo 500) may show **OK** — that is expected and unrelated.
 
 **Cause:** The composite USB parent device (`VID_046D&PID_0843` without `&MI_`) has a
 broken or missing driver. This blocks all child interfaces (video `MI_00`, audio `MI_02`)
