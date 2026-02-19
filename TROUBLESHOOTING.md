@@ -75,6 +75,54 @@ pnputil /scan-devices
 
 ---
 
+## Camera shows "Error" on parent device and "Unknown" on interfaces
+
+**Symptom:** `Get-PnpDevice` output looks like this:
+```
+Status  FriendlyName                       InstanceId
+------  ------------                       ----------
+Unknown Logitech Webcam C930e              USB\VID_046D&PID_0843&MI_02\...
+Unknown Logitech Webcam C930e              USB\VID_046D&PID_0843&MI_00\...
+Error   Logitech USB Camera (Webcam C930e) USB\VID_046D&PID_0843\7B27991E
+```
+
+**Cause:** The composite USB parent device (`VID_046D&PID_0843` without `&MI_`) has a
+broken or missing driver. This blocks all child interfaces (video `MI_00`, audio `MI_02`)
+from loading, so they stay as `Unknown`.
+
+**Fix — run in PowerShell as Administrator on the VM:**
+
+```powershell
+# 1. Stage the built-in UVC driver
+pnputil /add-driver C:\Windows\INF\usbvideo.inf /install
+
+# 2. Uninstall the broken parent (child interfaces are removed automatically)
+pnputil /remove-device "USB\VID_046D&PID_0843\7B27991E"
+
+# 3. Re-enumerate — Windows re-detects and binds the correct drivers
+pnputil /scan-devices
+```
+
+Then verify all entries are now **OK**:
+```powershell
+Get-PnpDevice | Where-Object { $_.InstanceId -like '*046D*' } |
+    Select-Object Status, FriendlyName, InstanceId
+```
+
+Expected result after fix:
+```
+Status  FriendlyName           InstanceId
+------  ------------           ----------
+OK      Logitech Webcam C930e  USB\VID_046D&PID_0843&MI_00\...
+OK      Logitech Webcam C930e  USB\VID_046D&PID_0843&MI_02\...
+OK      Logitech Webcam C930e  USB\VID_046D&PID_0843\...
+```
+
+> If the parent still shows **Error** after this, the Proxmox USB passthrough needs
+> `usb3=1` and an XHCI controller — see the section above.
+
+---
+
 ## Camera visible in FFmpeg but not in Windows Settings
 
 **Symptom:** `ffmpeg -list_devices` shows the camera, but Bluetooth & Devices > Cameras is empty.
