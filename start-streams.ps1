@@ -116,6 +116,7 @@ function Build-FFmpegArgs {
 
     $args = [System.Collections.Generic.List[string]]@(
         "-f", "dshow",
+        "-thread_queue_size", "512",  # buffer frames while VM device settles
         "-rtbufsize", "256M"   # large ring buffer to avoid dropped frames
     )
 
@@ -211,8 +212,8 @@ foreach ($cam in $cameras) {
         -NoNewWindow `
         -RedirectStandardOutput $logOut `
         -RedirectStandardError  $logErr
-    $ffmpegProcs.Add(@{ Name = "Camera $($cam.Index)"; Proc = $proc; LogOut = $logOut; LogErr = $logErr; Reported = $false })
-    Start-Sleep -Milliseconds 800
+    $ffmpegProcs.Add(@{ Name = "Camera $($cam.Index)"; Proc = $proc; CamArgs = $args; LogOut = $logOut; LogErr = $logErr; Reported = $false })
+    Start-Sleep -Seconds 3   # give the VM time to enumerate the next USB device
 }
 
 Start-Sleep -Seconds 1
@@ -261,13 +262,31 @@ try {
     while ($true) {
         Start-Sleep -Seconds 5
         foreach ($entry in $procs) {
-            if ($entry.Proc.HasExited -and -not $entry.Reported) {
-                $entry.Reported = $true
-                Write-Warning "$($entry.Name) (PID $($entry.Proc.Id)) exited unexpectedly (code $($entry.Proc.ExitCode))."
-                if ($entry.LogErr -and (Test-Path $entry.LogErr)) {
-                    Write-Host "--- $($entry.Name) output (last 30 lines) ---" -ForegroundColor DarkGray
-                    Get-Content $entry.LogErr | Select-Object -Last 30 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
-                    Write-Host "--- end of log ---" -ForegroundColor DarkGray
+            if ($entry.Proc.HasExited) {
+                if (-not $entry.Reported) {
+                    $entry.Reported = $true
+                    Write-Warning "$($entry.Name) (PID $($entry.Proc.Id)) exited unexpectedly (code $($entry.Proc.ExitCode))."
+                    if ($entry.LogErr -and (Test-Path $entry.LogErr)) {
+                        Write-Host "--- $($entry.Name) output (last 30 lines) ---" -ForegroundColor DarkGray
+                        Get-Content $entry.LogErr | Select-Object -Last 30 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
+                        Write-Host "--- end of log ---" -ForegroundColor DarkGray
+                    }
+                }
+
+                # Auto-restart FFmpeg cameras (but not MediaMTX)
+                if ($entry.ContainsKey('CamArgs')) {
+                    Write-Host "[Auto-restart] Restarting $($entry.Name) in 3 seconds..." -ForegroundColor Yellow
+                    Start-Sleep -Seconds 3
+                    $newProc = Start-Process `
+                        -FilePath $ffmpeg `
+                        -ArgumentList $entry.CamArgs `
+                        -PassThru `
+                        -NoNewWindow `
+                        -RedirectStandardOutput $entry.LogOut `
+                        -RedirectStandardError  $entry.LogErr
+                    $entry.Proc     = $newProc
+                    $entry.Reported = $false
+                    Write-Host "[Auto-restart] $($entry.Name) restarted (PID $($newProc.Id))." -ForegroundColor Green
                 }
             }
         }
