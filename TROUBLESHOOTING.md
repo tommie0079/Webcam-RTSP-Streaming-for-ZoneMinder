@@ -105,6 +105,11 @@ pnputil /remove-device "USB\VID_046D&PID_0843\7B27991E"
 pnputil /scan-devices
 ```
 
+> **Note:** Do NOT use `Disable-PnpDevice` / `Enable-PnpDevice` on an errored device —
+> it will fail with `Generic failure (HRESULT 0x80041001)` because the parent is in a
+> broken state. The `pnputil /remove-device` + `pnputil /scan-devices` approach above
+> is the correct method.
+
 Then verify all entries are now **OK**:
 ```powershell
 Get-PnpDevice | Where-Object { $_.InstanceId -like '*046D*' } |
@@ -120,8 +125,15 @@ OK      Logitech Webcam C930e  USB\VID_046D&PID_0843&MI_02\...
 OK      Logitech Webcam C930e  USB\VID_046D&PID_0843\...
 ```
 
-> If the parent still shows **Error** after this, the Proxmox USB passthrough needs
-> `usb3=1` and an XHCI controller — see the section above.
+**If the parent still shows Error after `pnputil /remove-device`**, the device is not
+releasing cleanly through software. Do a cold VM restart from the Proxmox host —
+this forces full USB re-enumeration and picks up the now-staged driver:
+```bash
+qm stop 103 && qm start 103
+```
+
+> If still Error after a cold restart, the Proxmox USB passthrough needs `usb3=1`
+> and an XHCI controller — see the **Camera not detected** section above.
 
 ---
 
