@@ -102,6 +102,13 @@ echo ""
 
     cat <<'EOF'
 # --- Encoding Settings (applied to all cameras) ---
+# Input format fed to FFmpeg from V4L2.
+# mjpeg = camera compresses in hardware before sending over USB (recommended).
+#         Avoids frame duplication on USB-limited devices like the Logitech C930e.
+# yuyv  = raw uncompressed — only use if mjpeg causes issues.
+# (leave blank = let FFmpeg auto-negotiate)
+INPUT_FORMAT=mjpeg
+
 # Target average bitrate in kbps per stream.
 # 8000 = ~8 Mbit/s (high quality 1080p).  Raise to 12000-20000 for 4K.
 BITRATE=8000
