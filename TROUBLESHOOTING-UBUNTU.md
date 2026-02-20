@@ -126,3 +126,59 @@ v4l2-ctl -d /dev/video2 --get-fmt-video
 ```
 
 Update `cameras.conf` with the correct `CAMERA1_DEVICE=` path.
+
+---
+
+## Stream is choppy / frames duplicating (`dup=` count climbing in log)
+
+**Symptom:** FFmpeg log shows `dup=` increasing rapidly, e.g. `dup=994 drop=0`. Video is choppy or stuttery in ZoneMinder.
+
+**Cause:** The camera is sending raw YUYV frames, which saturate USB bandwidth at full resolution/framerate. The Logitech C930e is especially prone to this — it defaults to YUYV which only delivers ~8fps over USB at 640x480.
+
+**Fix:** Use MJPEG input format — the camera compresses frames in hardware before sending them over USB, delivering full 30fps:
+
+In `cameras.conf`, ensure this is set:
+```
+INPUT_FORMAT=mjpeg
+```
+
+This is now the default in `detect-cameras.sh`. If you have an old `cameras.conf`, re-run detect:
+```bash
+./detect-cameras.sh
+```
+
+Or add it manually to your existing `cameras.conf`:
+```bash
+echo "INPUT_FORMAT=mjpeg" >> cameras.conf
+```
+
+Then restart streams:
+```bash
+./start-streams.sh
+```
+
+To verify it's working, the `dup=` count in the log should stay near zero.
+
+---
+
+## `git pull` fails — "Your local changes would be overwritten"
+
+**Symptom:**
+```
+error: Your local changes to the following files would be overwritten by merge:
+        detect-cameras.sh
+        start-streams.sh
+Please commit your changes or stash them before you merge.
+Aborting
+```
+
+**Cause:** The VM has local edits to scripts that conflict with updated versions in the repository.
+
+**Fix:** Discard the local changes and pull the remote versions:
+
+```bash
+git checkout -- detect-cameras.sh start-streams.sh
+git pull
+```
+
+> Only do this if you haven't intentionally customised those files. Your `cameras.conf` is not tracked by git and will not be affected.
