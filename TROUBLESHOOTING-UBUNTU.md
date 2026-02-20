@@ -76,15 +76,23 @@ If cameras are missing from `lsusb` entirely, USB passthrough from Proxmox is no
 
 ## Permission denied on `/dev/videoN`
 
-**Symptom:** FFmpeg or `v4l2-ctl` return `Permission denied` on `/dev/video0`.
+**Symptom:** FFmpeg or `v4l2-ctl` return `Permission denied` on `/dev/video0`, even though the devices are visible in `ls /dev/video*`.
 
-**Fix:** Add your user to the `video` group:
+This commonly happens right after loading `uvcvideo` — the devices appear but your user has no access yet.
+
+**Fix:** Add your user to the `video` group, then activate it in the current session:
 
 ```bash
 sudo usermod -aG video $USER
+newgrp video
 ```
 
-Then log out and back in (or run `newgrp video` in the current session).
+Verify it worked:
+```bash
+v4l2-ctl --list-devices
+```
+
+The `newgrp video` applies the group immediately without logging out. The change is also permanent — on next login it will be active automatically.
 
 ---
 
