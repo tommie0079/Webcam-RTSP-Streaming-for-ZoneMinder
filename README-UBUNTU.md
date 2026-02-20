@@ -18,7 +18,7 @@ This folder contains bash equivalents of the Windows PowerShell scripts.
 
 ```bash
 sudo apt update
-sudo apt install -y ffmpeg v4l-utils curl wget
+sudo apt install -y ffmpeg v4l-utils curl wget git
 ```
 
 ### 2 — Clone the repository
