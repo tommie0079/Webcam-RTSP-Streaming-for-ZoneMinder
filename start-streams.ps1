@@ -1,308 +1,344 @@
-# start-streams.ps1
+#!/usr/bin/env bash
+# start-streams.sh
 # Reads cameras.conf, starts MediaMTX, then launches one FFmpeg process per camera.
 # Supports any number of cameras defined in cameras.conf.
-# Keep this window open while streaming. Press Ctrl+C to stop everything cleanly.
+# Keep this terminal open while streaming. Press Ctrl+C to stop everything cleanly.
+#
+# Requires: ffmpeg, mediamtx  (see README-LINUX.md for setup)
 
-$ErrorActionPreference = "Stop"
-$scriptDir    = $PSScriptRoot
-$ffmpeg       = "$scriptDir\tools\ffmpeg\bin\ffmpeg.exe"
-$mediamtxExe  = "$scriptDir\tools\mediamtx\mediamtx.exe"
-# Store mediamtx.yml next to the exe so the path is free of spaces/special chars
-$mediamtxYml  = "$scriptDir\tools\mediamtx\mediamtx.yml"
-$confFile     = "$scriptDir\cameras.conf"
+set -uo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FFMPEG="ffmpeg"
+MEDIAMTX="$SCRIPT_DIR/tools/mediamtx/mediamtx"
+MEDIAMTX_YML="$SCRIPT_DIR/tools/mediamtx/mediamtx.yml"
+MEDIAMTX_DIR="$SCRIPT_DIR/tools/mediamtx"
+CONF_FILE="$SCRIPT_DIR/cameras.conf"
 
 # ---------------------------------------------------------------------------
 # Pre-flight checks
 # ---------------------------------------------------------------------------
 
-foreach ($f in @($ffmpeg, $mediamtxExe, $confFile)) {
-    if (-not (Test-Path $f)) {
-        Write-Host ""
-        Write-Host "ERROR: Missing required file:" -ForegroundColor Red
-        Write-Host "  $f" -ForegroundColor Red
-        Write-Host "Make sure you have run setup.ps1 and detect-cameras.ps1 first." -ForegroundColor Yellow
-        Write-Host ""
-        Write-Host "Press Enter to close..."
-        Read-Host | Out-Null
-        exit 1
-    }
-}
+if ! command -v ffmpeg &>/dev/null; then
+    echo ""
+    echo "ERROR: ffmpeg is not installed."
+    echo "Install with:  sudo apt install ffmpeg"
+    echo ""
+    exit 1
+fi
+
+if [[ ! -x "$MEDIAMTX" ]]; then
+    echo ""
+    echo "ERROR: MediaMTX not found at $MEDIAMTX"
+    echo "Download the Linux binary from https://github.com/bluenviron/mediamtx/releases"
+    echo "and place mediamtx in tools/mediamtx/"
+    echo ""
+    exit 1
+fi
+
+if [[ ! -f "$CONF_FILE" ]]; then
+    echo ""
+    echo "ERROR: cameras.conf not found."
+    echo "Run ./detect-cameras.sh first."
+    echo ""
+    exit 1
+fi
+
+mkdir -p "$MEDIAMTX_DIR"
 
 # ---------------------------------------------------------------------------
 # Parse cameras.conf
 # ---------------------------------------------------------------------------
 
-$conf = @{}
-Get-Content $confFile |
-    Where-Object { $_ -notmatch '^\s*#' -and $_ -match '^\s*\w+\s*=' } |
-    ForEach-Object {
-        $parts = $_ -split '=', 2
-        $conf[$parts[0].Trim()] = $parts[1].Trim()
-    }
+declare -A CONF
 
-function Conf($key, $default = '') {
-    if ($conf.ContainsKey($key) -and $conf[$key] -ne '') { return $conf[$key] }
-    return $default
+while IFS='=' read -r key value; do
+    # Skip comments and blank lines
+    [[ "$key" =~ ^[[:space:]]*# ]] && continue
+    [[ -z "${key// }" ]]           && continue
+    key="${key#"${key%%[![:space:]]*}"}"   # ltrim
+    key="${key%"${key##*[![:space:]]}"}"   # rtrim
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    CONF["$key"]="$value"
+done < "$CONF_FILE"
+
+conf_get() {
+    local key="$1" default="${2:-}"
+    echo "${CONF[$key]:-$default}"
 }
 
-$bitrate    = Conf "BITRATE"   "8000"
-$maxrate    = Conf "MAXRATE"   "12000"
-$crf        = Conf "CRF"       "18"
-$preset     = Conf "PRESET"    "veryfast"
-$resolution = Conf "RESOLUTION"
-$framerate  = Conf "FRAMERATE"
+BITRATE=$(conf_get BITRATE 8000)
+MAXRATE=$(conf_get MAXRATE 12000)
+CRF=$(conf_get CRF 18)
+PRESET=$(conf_get PRESET veryfast)
+RESOLUTION=$(conf_get RESOLUTION "")
+FRAMERATE=$(conf_get FRAMERATE "")
+INPUT_FORMAT=$(conf_get INPUT_FORMAT "mjpeg")
+BUFSIZE=$((MAXRATE * 2))
 
-# Discover all CAMERA<n>_NAME keys dynamically (supports any number of cameras)
-$cameras = [System.Collections.Generic.List[hashtable]]::new()
-$index = 1
-while ($true) {
-    $name   = Conf "CAMERA${index}_NAME"
-    $stream = Conf "CAMERA${index}_STREAM" "cam$index"
-    if (-not $name) { break }
-    $cameras.Add(@{ Index = $index; Name = $name; Stream = $stream })
-    $index++
-}
+# Discover all CAMERA<n>_DEVICE keys
+declare -a CAM_DEVICES=()
+declare -a CAM_STREAMS=()
+declare -a CAM_INPUT_FORMATS=()
+n=1
+while true; do
+    dev=$(conf_get "CAMERA${n}_DEVICE" "")
+    [[ -z "$dev" ]] && break
+    stream=$(conf_get "CAMERA${n}_STREAM" "cam${n}")
+    fmt=$(conf_get "CAMERA${n}_INPUT_FORMAT" "$INPUT_FORMAT")
+    CAM_DEVICES+=("$dev")
+    CAM_STREAMS+=("$stream")
+    CAM_INPUT_FORMATS+=("$fmt")
+    n=$((n+1))
+done
 
-if ($cameras.Count -eq 0) {
-    Write-Host ""
-    Write-Host "ERROR: No CAMERA1_NAME found in cameras.conf." -ForegroundColor Red
-    Write-Host "Run detect-cameras.ps1 first." -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "Press Enter to close..."
-    Read-Host | Out-Null
+if [[ ${#CAM_DEVICES[@]} -eq 0 ]]; then
+    echo ""
+    echo "ERROR: No CAMERA1_DEVICE found in cameras.conf."
+    echo "Run ./detect-cameras.sh first."
+    echo ""
     exit 1
-}
+fi
 
-Write-Host "[Config] Found $($cameras.Count) camera(s) in cameras.conf."
+echo "[Config] Found ${#CAM_DEVICES[@]} camera(s) in cameras.conf."
 
 # ---------------------------------------------------------------------------
 # Write mediamtx.yml
 # ---------------------------------------------------------------------------
 
-# Build mediamtx.yml dynamically with one path block per camera
-$ymlLines = [System.Collections.Generic.List[string]]::new()
-$ymlLines.Add("# mediamtx.yml - auto-generated by start-streams.ps1")
-$ymlLines.Add("")
-$ymlLines.Add("logLevel: info")
-$ymlLines.Add("logDestinations: [stdout]")
-$ymlLines.Add("")
-$ymlLines.Add("rtsp: yes")
-$ymlLines.Add("rtspAddress: :8554")
-$ymlLines.Add('rtspEncryption: "no"')
-$ymlLines.Add("")
-$ymlLines.Add("rtmp: no")
-$ymlLines.Add("hls: no")
-$ymlLines.Add("webrtc: no")
-$ymlLines.Add("srt: no")
-$ymlLines.Add("")
-$ymlLines.Add("paths:")
-foreach ($cam in $cameras) {
-    $ymlLines.Add("  $($cam.Stream):")
-    $ymlLines.Add("    source: publisher")
-}
+{
+    echo "# mediamtx.yml - auto-generated by start-streams.sh"
+    echo ""
+    echo "logLevel: info"
+    echo "logDestinations: [stdout]"
+    echo ""
+    echo "rtsp: yes"
+    echo "rtspAddress: :8554"
+    echo 'rtspEncryption: "no"'
+    echo ""
+    echo "rtmp: no"
+    echo "hls: no"
+    echo "webrtc: no"
+    echo "srt: no"
+    echo ""
+    echo "paths:"
+    for stream in "${CAM_STREAMS[@]}"; do
+        echo "  ${stream}:"
+        echo "    source: publisher"
+    done
+} > "$MEDIAMTX_YML"
 
-$ymlLines | Set-Content $mediamtxYml -Encoding UTF8
-Write-Host "[Config] mediamtx.yml written ($($cameras.Count) path(s))."
+echo "[Config] mediamtx.yml written (${#CAM_STREAMS[@]} path(s))."
 
 # ---------------------------------------------------------------------------
-# Build FFmpeg argument lists
+# Build FFmpeg argument array for a camera
+# Usage: build_ffmpeg_args /dev/video0 cam1 [input_format]
+# Prints arguments one per line (caller reads into array)
 # ---------------------------------------------------------------------------
 
-function Build-FFmpegArgs {
-    param (
-        [string]$CameraName,
-        [string]$StreamPath
-    )
+build_ffmpeg_args() {
+    local device="$1"
+    local stream_path="$2"
+    local cam_fmt="${3:-$INPUT_FORMAT}"
 
-    $args = [System.Collections.Generic.List[string]]@(
-        "-f", "dshow",
-        "-thread_queue_size", "512",  # buffer frames while VM device settles
-        "-rtbufsize", "256M"   # large ring buffer to avoid dropped frames
-    )
+    # Input
+    echo "-f"
+    echo "v4l2"
+    if [[ -n "$cam_fmt" ]]; then
+        echo "-input_format"
+        echo "$cam_fmt"
+    fi
+    echo "-thread_queue_size"
+    echo "512"
 
-    # Optional overrides
-    if ($resolution) { $args.AddRange([string[]]@("-video_size", $resolution)) }
-    if ($framerate)  { $args.AddRange([string[]]@("-framerate",  $framerate))  }
+    if [[ -n "$RESOLUTION" ]]; then
+        echo "-video_size"
+        echo "$RESOLUTION"
+    fi
+    if [[ -n "$FRAMERATE" ]]; then
+        echo "-framerate"
+        echo "$FRAMERATE"
+    fi
 
-    $args.AddRange([string[]]@(
-        "-i", "`"video=$CameraName`"",
+    echo "-i"
+    echo "$device"
 
-        # H.264 encoding - visually lossless quality
-        "-c:v", "libx264",
-        "-preset", $preset,
-        "-tune", "zerolatency",     # minimise latency (important for live monitoring)
-        "-crf", $crf,               # quality target (18 = visually lossless)
-        "-maxrate", "${maxrate}k",  # bitrate cap for network headroom
-        "-bufsize", "$([int]$maxrate * 2)k",
-        "-pix_fmt", "yuv420p",      # broadest decoder compatibility
-        "-an",                          # no audio - avoids dshow audio device errors
+    # Encoding
+    echo "-c:v"
+    echo "libx264"
+    echo "-preset"
+    echo "$PRESET"
+    echo "-tune"
+    echo "zerolatency"
+    echo "-crf"
+    echo "$CRF"
+    echo "-maxrate"
+    echo "${MAXRATE}k"
+    echo "-bufsize"
+    echo "${BUFSIZE}k"
+    echo "-pix_fmt"
+    echo "yuv420p"
+    echo "-an"
 
-        # RTSP output to MediaMTX
-        "-f", "rtsp",
-        "-rtsp_transport", "tcp",
-        "rtsp://localhost:8554/$StreamPath"
-    ))
-
-    return $args.ToArray()
+    # Output
+    echo "-f"
+    echo "rtsp"
+    echo "-rtsp_transport"
+    echo "tcp"
+    echo "rtsp://localhost:8554/${stream_path}"
 }
+
+# ---------------------------------------------------------------------------
+# Cleanup handler - kill everything on Ctrl+C
+# ---------------------------------------------------------------------------
+
+MEDIAMTX_PID=""
+declare -a FFMPEG_PIDS=()
+
+cleanup() {
+    echo ""
+    echo "Stopping all processes..."
+    for pid in "${FFMPEG_PIDS[@]:-}"; do
+        [[ -n "$pid" ]] && kill "$pid" 2>/dev/null && echo "  Stopped FFmpeg PID $pid"
+    done
+    [[ -n "$MEDIAMTX_PID" ]] && kill "$MEDIAMTX_PID" 2>/dev/null && echo "  Stopped MediaMTX PID $MEDIAMTX_PID"
+    echo "All stopped."
+    exit 0
+}
+
+trap cleanup INT TERM
 
 # ---------------------------------------------------------------------------
 # Start MediaMTX
 # ---------------------------------------------------------------------------
 
-# mediamtx.yml lives in the same folder as the exe.
-# Launch MediaMTX with that folder as working directory and no path argument
-# so it auto-discovers mediamtx.yml - this avoids passing a path with
-# spaces or special characters (å, ø, etc.) on the command line.
-$mediamtxDir  = Split-Path $mediamtxExe -Parent
-$mediamtxLog  = "$mediamtxDir\mediamtx.log"
+echo "[MediaMTX] Starting RTSP server..."
+"$MEDIAMTX" "$MEDIAMTX_YML" \
+    > "$MEDIAMTX_DIR/mediamtx.log" \
+    2> "$MEDIAMTX_DIR/mediamtx-err.log" &
+MEDIAMTX_PID=$!
 
-Write-Host "[MediaMTX] Starting RTSP server..."
-$mediamtxProc = Start-Process `
-    -FilePath $mediamtxExe `
-    -WorkingDirectory $mediamtxDir `
-    -RedirectStandardOutput $mediamtxLog `
-    -RedirectStandardError  "$mediamtxDir\mediamtx-err.log" `
-    -PassThru `
-    -NoNewWindow
+sleep 2
 
-Start-Sleep -Seconds 2
-
-if ($mediamtxProc.HasExited) {
-    Write-Host ""
-    Write-Host "ERROR: MediaMTX exited immediately." -ForegroundColor Red
-    # Show the actual log so the user knows the real reason
-    if (Test-Path $mediamtxLog) {
-        Write-Host ""
-        Write-Host "--- mediamtx output ---" -ForegroundColor DarkGray
-        Get-Content $mediamtxLog | Select-Object -Last 20 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
-        $errLog = "$mediamtxDir\mediamtx-err.log"
-        if ((Test-Path $errLog) -and (Get-Item $errLog).Length -gt 0) {
-            Get-Content $errLog | Select-Object -Last 10 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
-        }
-        Write-Host "--- end of log ---" -ForegroundColor DarkGray
-    }
-    Write-Host ""
-    Write-Host "Possible causes:" -ForegroundColor Yellow
-    Write-Host "  - Port 8554 is already in use (another MediaMTX still running?)" -ForegroundColor Yellow
-    Write-Host "  - mediamtx.yml could not be read" -ForegroundColor Yellow
-    Write-Host "  - Antivirus blocked mediamtx.exe" -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "Press Enter to close..."
-    Read-Host | Out-Null
+if ! kill -0 "$MEDIAMTX_PID" 2>/dev/null; then
+    echo ""
+    echo "ERROR: MediaMTX exited immediately."
+    echo ""
+    echo "--- mediamtx output ---"
+    tail -20 "$MEDIAMTX_DIR/mediamtx.log"   2>/dev/null || true
+    tail -10 "$MEDIAMTX_DIR/mediamtx-err.log" 2>/dev/null || true
+    echo "--- end of log ---"
+    echo ""
+    echo "Possible causes:"
+    echo "  - Port 8554 already in use  (check: ss -tlnp | grep 8554)"
+    echo "  - mediamtx.yml could not be read"
     exit 1
-}
-Write-Host "[MediaMTX] Running (PID $($mediamtxProc.Id))"
+fi
+
+echo "[MediaMTX] Running (PID $MEDIAMTX_PID)"
 
 # ---------------------------------------------------------------------------
 # Start FFmpeg for each camera
 # ---------------------------------------------------------------------------
 
-$ffmpegProcs = [System.Collections.Generic.List[hashtable]]::new()
+declare -a CAM_ARGS_FILES=()   # temp files holding args, one per line
+declare -a CAM_LOG_ERR=()
 
-foreach ($cam in $cameras) {
-    $args = Build-FFmpegArgs -CameraName $cam.Name -StreamPath $cam.Stream
-    $logOut = "$mediamtxDir\ffmpeg-cam$($cam.Index)-out.log"
-    $logErr = "$mediamtxDir\ffmpeg-cam$($cam.Index)-err.log"
-    Write-Host "[Camera $($cam.Index)] Starting: $($cam.Name)  ->  rtsp://localhost:8554/$($cam.Stream)"
-    $proc = Start-Process `
-        -FilePath $ffmpeg `
-        -ArgumentList $args `
-        -PassThru `
-        -NoNewWindow `
-        -RedirectStandardOutput $logOut `
-        -RedirectStandardError  $logErr
-    $ffmpegProcs.Add(@{ Name = "Camera $($cam.Index)"; Proc = $proc; CamArgs = $args; LogOut = $logOut; LogErr = $logErr; Reported = $false })
-    Start-Sleep -Seconds 3   # give the VM time to enumerate the next USB device
-}
+for i in "${!CAM_DEVICES[@]}"; do
+    n=$((i+1))
+    dev="${CAM_DEVICES[$i]}"
+    stream="${CAM_STREAMS[$i]}"
+    log_err="$MEDIAMTX_DIR/ffmpeg-cam${n}-err.log"
+    log_out="$MEDIAMTX_DIR/ffmpeg-cam${n}-out.log"
+    args_file="$(mktemp /tmp/ffmpeg-cam${n}-args.XXXXXX)"
 
-Start-Sleep -Seconds 1
+    build_ffmpeg_args "$dev" "$stream" "${CAM_INPUT_FORMATS[$i]}" > "$args_file"
+    CAM_ARGS_FILES+=("$args_file")
+    CAM_LOG_ERR+=("$log_err")
+
+    # Read args from file into array (handles spaces correctly)
+    mapfile -t args < "$args_file"
+
+    echo "[Camera $n] Starting: $dev  ->  rtsp://localhost:8554/$stream"
+    ffmpeg "${args[@]}" \
+        > "$log_out" \
+        2> "$log_err" &
+    FFMPEG_PIDS+=($!)
+    sleep 3   # give device time to enumerate before opening next
+done
+
+sleep 1
 
 # ---------------------------------------------------------------------------
 # Show connection info
 # ---------------------------------------------------------------------------
 
-$localIp = (
-    Get-NetIPAddress -AddressFamily IPv4 |
-    Where-Object {
-        $_.InterfaceAlias -notlike "*Loopback*" -and
-        $_.PrefixOrigin   -ne "WellKnown"       -and
-        $_.IPAddress      -notlike "169.254.*"
-    } |
-    Sort-Object -Property InterfaceMetric |
-    Select-Object -First 1
-).IPAddress
+LOCAL_IP=$(ip -4 route get 1.0.0.0 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}' | head -1)
+LOCAL_IP="${LOCAL_IP:-<your-ip>}"
 
-Write-Host ""
-Write-Host "========================================================="
-Write-Host " Streams are live!  ($($cameras.Count) camera(s))"
-Write-Host "========================================================="
-Write-Host ""
-foreach ($cam in $cameras) {
-    Write-Host "  Camera $($cam.Index): rtsp://${localIp}:8554/$($cam.Stream)"
-}
-Write-Host ""
-Write-Host "Add each URL as a monitor in ZoneMinder:"
-Write-Host "  Source Type : FFmpeg"
-Write-Host "  Source Path : rtsp://${localIp}:8554/<stream>"
-Write-Host ""
-Write-Host "Press Ctrl+C to stop all streams."
-Write-Host "========================================================="
-Write-Host ""
+echo ""
+echo "========================================================="
+echo " Streams are live!  (${#CAM_DEVICES[@]} camera(s))"
+echo "========================================================="
+echo ""
+for i in "${!CAM_DEVICES[@]}"; do
+    n=$((i+1))
+    echo "  Camera $n: rtsp://${LOCAL_IP}:8554/${CAM_STREAMS[$i]}"
+done
+echo ""
+echo "Add each URL as a monitor in ZoneMinder:"
+echo "  Source Type : FFmpeg"
+echo "  Source Path : rtsp://${LOCAL_IP}:8554/<stream>"
+echo ""
+echo "Press Ctrl+C to stop all streams."
+echo "========================================================="
+echo ""
 
 # ---------------------------------------------------------------------------
-# Monitor loop - watch for unexpected exits and clean up on Ctrl+C
+# Monitor loop - watch for unexpected exits, auto-restart FFmpeg on crash
 # ---------------------------------------------------------------------------
 
-$procs = [System.Collections.Generic.List[hashtable]]::new()
-$procs.Add(@{ Name = "MediaMTX"; Proc = $mediamtxProc; LogErr = $mediamtxLog; Reported = $false })
-foreach ($fp in $ffmpegProcs) { $procs.Add($fp) }
+while true; do
+    sleep 5
 
-try {
-    while ($true) {
-        Start-Sleep -Seconds 5
-        foreach ($entry in $procs) {
-            if ($entry.Proc.HasExited) {
-                if (-not $entry.Reported) {
-                    $entry.Reported = $true
-                    Write-Warning "$($entry.Name) (PID $($entry.Proc.Id)) exited unexpectedly (code $($entry.Proc.ExitCode))."
-                    if ($entry.LogErr -and (Test-Path $entry.LogErr)) {
-                        Write-Host "--- $($entry.Name) output (last 30 lines) ---" -ForegroundColor DarkGray
-                        Get-Content $entry.LogErr | Select-Object -Last 30 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
-                        Write-Host "--- end of log ---" -ForegroundColor DarkGray
-                    }
-                }
+    # Check MediaMTX
+    if ! kill -0 "$MEDIAMTX_PID" 2>/dev/null; then
+        echo "WARNING: MediaMTX (PID $MEDIAMTX_PID) exited unexpectedly."
+        echo "--- mediamtx log (last 20 lines) ---"
+        tail -20 "$MEDIAMTX_DIR/mediamtx.log" 2>/dev/null || true
+        echo "--- end ---"
+        # MediaMTX is not auto-restarted — streams cannot continue without it
+        cleanup
+    fi
 
-                # Auto-restart FFmpeg cameras (but not MediaMTX)
-                if ($entry.ContainsKey('CamArgs')) {
-                    Write-Host "[Auto-restart] Restarting $($entry.Name) in 3 seconds..." -ForegroundColor Yellow
-                    Start-Sleep -Seconds 3
-                    $newProc = Start-Process `
-                        -FilePath $ffmpeg `
-                        -ArgumentList $entry.CamArgs `
-                        -PassThru `
-                        -NoNewWindow `
-                        -RedirectStandardOutput $entry.LogOut `
-                        -RedirectStandardError  $entry.LogErr
-                    $entry.Proc     = $newProc
-                    $entry.Reported = $false
-                    Write-Host "[Auto-restart] $($entry.Name) restarted (PID $($newProc.Id))." -ForegroundColor Green
-                }
-            }
-        }
-    }
-}
-finally {
-    Write-Host ""
-    Write-Host "Stopping all processes..."
-    foreach ($entry in $procs) {
-        if (-not $entry.Proc.HasExited) {
-            Write-Host "  Stopping $($entry.Name) (PID $($entry.Proc.Id))..."
-            Stop-Process -Id $entry.Proc.Id -Force -ErrorAction SilentlyContinue
-        }
-    }
-    Write-Host "All stopped."
-    Write-Host ""
-    Write-Host "Press Enter to close..."
-    Read-Host | Out-Null
-}
+    # Check each FFmpeg process
+    for i in "${!FFMPEG_PIDS[@]}"; do
+        pid="${FFMPEG_PIDS[$i]}"
+        n=$((i+1))
+        if [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; then
+            echo "WARNING: FFmpeg Camera $n (PID $pid) exited unexpectedly."
+            log_err="${CAM_LOG_ERR[$i]}"
+            if [[ -f "$log_err" ]]; then
+                echo "--- ffmpeg-cam${n} log (last 30 lines) ---"
+                tail -30 "$log_err"
+                echo "--- end ---"
+            fi
+
+            echo "[Auto-restart] Restarting Camera $n in 3 seconds..."
+            sleep 3
+
+            dev="${CAM_DEVICES[$i]}"
+            stream="${CAM_STREAMS[$i]}"
+            log_out="$MEDIAMTX_DIR/ffmpeg-cam${n}-out.log"
+            args_file="${CAM_ARGS_FILES[$i]}"
+            mapfile -t args < "$args_file"
+
+            ffmpeg "${args[@]}" \
+                > "$log_out" \
+                2> "$log_err" &
+            new_pid=$!
+            FFMPEG_PIDS[$i]=$new_pid
+            echo "[Auto-restart] Camera $n restarted (PID $new_pid)."
+        fi
+    done
+done
