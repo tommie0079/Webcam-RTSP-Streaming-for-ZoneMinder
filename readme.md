@@ -13,6 +13,14 @@ Built with **FFmpeg** (H.264 capture) and **MediaMTX** (RTSP server).
 | **Windows 11** (IoT or any edition) | [README-WINDOWS.md](README-WINDOWS.md) | `menu.ps1`, `detect-cameras.ps1`, `start-streams.ps1` |
 | **Ubuntu / Linux** | [README-UBUNTU.md](README-UBUNTU.md) | `menu.sh`, `detect-cameras.sh`, `start-streams.sh` |
 
+## Additional guides
+
+| Topic | Guide |
+|---|---|
+| Proxmox USB passthrough (including duplicate camera models) | [PROXMOX-USB-PASSTHROUGH.md](PROXMOX-USB-PASSTHROUGH.md) |
+| Proxmox VM display resolution fix | [PROXMOX-DISPLAY.md](PROXMOX-DISPLAY.md) |
+| Ubuntu troubleshooting | [TROUBLESHOOTING-UBUNTU.md](TROUBLESHOOTING-UBUNTU.md) |
+
 ---
 
 ## Architecture
