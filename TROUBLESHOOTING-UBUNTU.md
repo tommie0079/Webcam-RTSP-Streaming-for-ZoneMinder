@@ -188,6 +188,46 @@ tail -f tools/mediamtx/ffmpeg-cam1-err.log tools/mediamtx/ffmpeg-cam2-err.log
 
 ---
 
+## Lenovo 500 RGB Camera — "Dequeued v4l2 buffer contains corrupted data"
+
+**Symptom:** CAM2 log is full of:
+```
+[video4linux2,v4l2 @ ...] Dequeued v4l2 buffer contains corrupted data (XXXXX bytes).
+[mjpeg @ ...] mjpeg_decode_dc: bad vlc: 0:0
+[mjpeg @ ...] error dc
+```
+
+**Cause:** The Lenovo 500 RGB Camera does not support MJPEG input over V4L2 reliably. The global `INPUT_FORMAT=mjpeg` setting (which works well for the Logitech C930e) causes corrupted frames on this camera.
+
+**Fix:** Override the input format for CAM2 only. Edit `cameras.conf` and add a blank `CAMERA2_INPUT_FORMAT=` line to let FFmpeg auto-negotiate (falls back to YUYV):
+
+```bash
+nano cameras.conf
+```
+
+Find the cam2 section and add:
+```ini
+CAMERA2_DEVICE=/dev/video2
+CAMERA2_STREAM=cam2
+CAMERA2_INPUT_FORMAT=
+```
+
+Then restart streams:
+```bash
+pkill -f start-streams.sh; pkill -f mediamtx; pkill -f ffmpeg
+./start-streams.sh
+```
+
+The corrupted data errors should stop. Note that YUYV uses more USB bandwidth than MJPEG, so if the Lenovo camera shows frame duplication (`dup=` climbing), reduce its resolution in `cameras.conf`:
+```ini
+CAMERA2_INPUT_FORMAT=
+RESOLUTION=1280x720
+```
+
+> **Note:** Per-camera `CAMERA<n>_INPUT_FORMAT` support was added in the updated `start-streams.sh`. If you get `git pull` errors, run `git checkout -- start-streams.sh detect-cameras.sh && git pull` first.
+
+---
+
 ## `git pull` fails — "Your local changes would be overwritten"
 
 **Symptom:**
