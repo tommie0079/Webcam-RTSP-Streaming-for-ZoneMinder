@@ -41,23 +41,24 @@ declare -a DEVICES=()      # /dev/videoN paths
 declare -a NAMES=()        # friendly names
 
 current_name=""
+current_added=0   # reset for each camera header block
 while IFS= read -r line; do
     # Lines with a colon at the end are device name headers
     if [[ "$line" =~ ^([^/].+)\(.*\):$ ]]; then
         # Strip trailing whitespace from name
         current_name=$(echo "${BASH_REMATCH[1]}" | sed 's/[[:space:]]*$//')
+        current_added=0   # new camera block — allow adding first node
     elif [[ "$line" =~ ^[[:space:]]+(/dev/video[0-9]+)$ ]]; then
         dev="${BASH_REMATCH[1]}"
-        # Only take the first node for each camera name
-        already_added=0
-        for n in "${NAMES[@]:-}"; do
-            [[ "$n" == "$current_name" ]] && already_added=1 && break
-        done
-        if [[ $already_added -eq 0 && -n "$current_name" ]]; then
+        # Only take the first valid capture node per camera header block.
+        # This correctly handles two cameras with the same model name
+        # (e.g. two Logitech C930e) — each header block is a distinct device.
+        if [[ $current_added -eq 0 && -n "$current_name" ]]; then
             # Verify FFmpeg can open this node as a video capture device
             if v4l2-ctl -d "$dev" --get-fmt-video &>/dev/null 2>&1; then
                 DEVICES+=("$dev")
                 NAMES+=("$current_name")
+                current_added=1
             fi
         fi
     fi
@@ -97,6 +98,7 @@ echo ""
         echo "# Device found: ${NAMES[$i]}"
         echo "CAMERA${n}_DEVICE=${DEVICES[$i]}"
         echo "CAMERA${n}_STREAM=cam${n}"
+        echo "# CAMERA${n}_INPUT_FORMAT=   # override global INPUT_FORMAT for this camera (mjpeg / yuyv / blank=auto)"
         echo ""
     done
 
