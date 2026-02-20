@@ -12,16 +12,32 @@ This folder contains bash equivalents of the Windows PowerShell scripts.
 
 ## Quick start
 
+> **Tip:** Run each command block separately and wait for the prompt to return before continuing.
+
 ### 1 — Install dependencies
 
 ```bash
 sudo apt update
-sudo apt install -y ffmpeg v4l-utils
+sudo apt install -y ffmpeg v4l-utils curl wget
 ```
 
-### 2 — Install MediaMTX (Linux binary)
+### 2 — Create the scripts folder and copy files
 
-Run these commands from inside the scripts folder:
+Create a folder in your home directory and copy the `.sh` scripts and `cameras.conf` into it (e.g. via SCP from the Windows machine, or a shared folder):
+
+```bash
+mkdir -p ~/overvåkingscript
+cd ~/overvåkingscript
+```
+
+Transfer files from Windows to the VM (run this on your Windows machine):
+```powershell
+scp *.sh cameras.conf mediamtx.yml nimda@<vm-ip>:~/overvåkingscript/
+```
+
+### 3 — Install MediaMTX (Linux binary)
+
+Run these commands from inside the scripts folder (`~/overvåkingscript`):
 
 ```bash
 mkdir -p tools/mediamtx
@@ -31,13 +47,18 @@ tar -xzf "/tmp/mediamtx_${VER}_linux_amd64.tar.gz" -C tools/mediamtx/
 chmod +x tools/mediamtx/mediamtx
 ```
 
-### 3 — Make scripts executable
+Verify it works:
+```bash
+./tools/mediamtx/mediamtx --version
+```
+
+### 4 — Make scripts executable
 
 ```bash
 chmod +x menu.sh detect-cameras.sh start-streams.sh
 ```
 
-### 4 — Run the menu
+### 5 — Run the menu
 
 ```bash
 ./menu.sh
