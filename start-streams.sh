@@ -73,6 +73,7 @@ CRF=$(conf_get CRF 18)
 PRESET=$(conf_get PRESET veryfast)
 RESOLUTION=$(conf_get RESOLUTION "")
 FRAMERATE=$(conf_get FRAMERATE "")
+INPUT_FORMAT=$(conf_get INPUT_FORMAT "mjpeg")
 BUFSIZE=$((MAXRATE * 2))
 
 # Discover all CAMERA<n>_DEVICE keys
@@ -139,6 +140,10 @@ build_ffmpeg_args() {
     # Input
     echo "-f"
     echo "v4l2"
+    if [[ -n "$INPUT_FORMAT" ]]; then
+        echo "-input_format"
+        echo "$INPUT_FORMAT"
+    fi
     echo "-thread_queue_size"
     echo "512"
 
