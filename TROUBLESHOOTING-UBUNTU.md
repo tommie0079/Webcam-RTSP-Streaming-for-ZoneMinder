@@ -161,6 +161,33 @@ To verify it's working, the `dup=` count in the log should stay near zero.
 
 ---
 
+## Check stream logs
+
+Use this to quickly see the last 30 lines of both camera logs at once:
+
+```bash
+echo "=== CAM1 ===" && tail -30 tools/mediamtx/ffmpeg-cam1-err.log && echo "=== CAM2 ===" && tail -30 tools/mediamtx/ffmpeg-cam2-err.log
+```
+
+To follow logs live while streams are running:
+```bash
+tail -f tools/mediamtx/ffmpeg-cam1-err.log tools/mediamtx/ffmpeg-cam2-err.log
+```
+
+**What to look for:**
+
+| Log output | Meaning |
+|---|---|
+| `frame= 100 fps= 30` | Stream is working normally |
+| `dup=` count climbing fast | Frame duplication — see choppy stream section above |
+| `Dequeued v4l2 buffer contains corrupted data` | Wrong `INPUT_FORMAT` for this camera — try blank or yuyv |
+| `mjpeg_decode_dc: bad vlc` | MJPEG corruption — camera doesn't support MJPEG properly |
+| `No such file or directory` | Wrong device node in `cameras.conf` |
+| `Permission denied` | User not in `video` group — see permission section above |
+| `Connection refused` on RTSP output | MediaMTX not running or wrong port |
+
+---
+
 ## `git pull` fails — "Your local changes would be overwritten"
 
 **Symptom:**
