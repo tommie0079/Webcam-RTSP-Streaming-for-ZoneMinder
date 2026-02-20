@@ -21,18 +21,11 @@ sudo apt update
 sudo apt install -y ffmpeg v4l-utils curl wget
 ```
 
-### 2 — Create the scripts folder and copy files
-
-Create a folder in your home directory and copy the `.sh` scripts and `cameras.conf` into it (e.g. via SCP from the Windows machine, or a shared folder):
+### 2 — Clone the repository
 
 ```bash
-mkdir -p ~/overvåkingscript
+git clone https://github.com/tommie0079/Webcam-RTSP-Streaming-for-ZoneMinder.git ~/overvåkingscript
 cd ~/overvåkingscript
-```
-
-Transfer files from Windows to the VM (run this on your Windows machine):
-```powershell
-scp *.sh cameras.conf mediamtx.yml nimda@<vm-ip>:~/overvåkingscript/
 ```
 
 ### 3 — Install MediaMTX (Linux binary)
