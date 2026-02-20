@@ -94,23 +94,15 @@ ffmpeg -f v4l2 -i /dev/video0 -t 3 /tmp/test.mp4
 
 ## Proxmox USB passthrough
 
-If running in a Proxmox VM, USB cameras must be passed through from the host:
+If running in a Proxmox VM, USB cameras must be passed through from the host.
 
-```bash
-# On Proxmox host — check cameras are visible
-lsusb | grep -E "046d:0843|17ef:482f"
+See the dedicated guide: **[PROXMOX-USB-PASSTHROUGH.md](PROXMOX-USB-PASSTHROUGH.md)**
 
-# Pass through with USB 3.0 flag
-qm set 103 --usb0 host=046d:0843,usb3=1
-
-# Full stop/start to enumerate USB
-qm stop 103 && qm start 103
-```
-
-Inside the VM, verify the camera appeared:
-```bash
-v4l2-ctl --list-devices
-```
+It covers:
+- Passing cameras by USB ID (unique models)
+- Passing cameras by USB port (required when two cameras share the same USB ID, e.g. two Logitech C930e)
+- How to read `lsusb -t` to find port paths
+- Hot-plug vs full VM restart
 
 ---
 
