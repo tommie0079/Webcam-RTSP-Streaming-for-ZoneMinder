@@ -25,6 +25,37 @@ ls /dev/video*
 echo "uvcvideo" | sudo tee /etc/modules-load.d/uvcvideo.conf
 ```
 
+### Module loaded but cameras still not showing (`Cannot open device /dev/video0`)
+
+If `modprobe uvcvideo` runs without error but `v4l2-ctl --list-devices` still shows nothing, the driver loaded after the USB devices were already enumerated — so it never bound to the cameras.
+
+**Simplest fix — reboot** (the `uvcvideo.conf` file ensures it loads before USB enumeration next time):
+
+```bash
+sudo reboot
+```
+
+After reboot, verify:
+
+```bash
+v4l2-ctl --list-devices
+ls /dev/video*
+```
+
+**Alternative — force re-enumeration without rebooting:**
+
+```bash
+# Confirm the module is loaded
+dmesg | grep -i uvc
+
+# Re-bind USB devices on Bus 002 (where the cameras are)
+for dev in /sys/bus/usb/devices/2-*/; do
+    echo -n "$(basename $dev)" | sudo tee /sys/bus/usb/drivers/usb/unbind
+    sleep 0.5
+    echo -n "$(basename $dev)" | sudo tee /sys/bus/usb/drivers/usb/bind
+done
+```
+
 ---
 
 ## No V4L2 devices found — other causes
