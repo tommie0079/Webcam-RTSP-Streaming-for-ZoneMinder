@@ -21,15 +21,15 @@ sudo apt install -y ffmpeg v4l-utils
 
 ### 2 — Install MediaMTX (Linux binary)
 
+Run these commands from inside the scripts folder:
+
 ```bash
 mkdir -p tools/mediamtx
-cd /tmp
-wget https://github.com/bluenviron/mediamtx/releases/latest/download/mediamtx_linux_amd64.tar.gz
-tar -xzf mediamtx_linux_amd64.tar.gz -C ~/path/to/scripts/tools/mediamtx/
-chmod +x ~/path/to/scripts/tools/mediamtx/mediamtx
+VER=$(curl -s https://api.github.com/repos/bluenviron/mediamtx/releases/latest | grep '"tag_name"' | cut -d'"' -f4)
+wget -P /tmp "https://github.com/bluenviron/mediamtx/releases/download/${VER}/mediamtx_${VER}_linux_amd64.tar.gz"
+tar -xzf "/tmp/mediamtx_${VER}_linux_amd64.tar.gz" -C tools/mediamtx/
+chmod +x tools/mediamtx/mediamtx
 ```
-
-> Replace `~/path/to/scripts/` with the actual folder path.
 
 ### 3 — Make scripts executable
 
