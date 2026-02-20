@@ -79,13 +79,16 @@ BUFSIZE=$((MAXRATE * 2))
 # Discover all CAMERA<n>_DEVICE keys
 declare -a CAM_DEVICES=()
 declare -a CAM_STREAMS=()
+declare -a CAM_INPUT_FORMATS=()
 n=1
 while true; do
     dev=$(conf_get "CAMERA${n}_DEVICE" "")
     [[ -z "$dev" ]] && break
     stream=$(conf_get "CAMERA${n}_STREAM" "cam${n}")
+    fmt=$(conf_get "CAMERA${n}_INPUT_FORMAT" "$INPUT_FORMAT")
     CAM_DEVICES+=("$dev")
     CAM_STREAMS+=("$stream")
+    CAM_INPUT_FORMATS+=("$fmt")
     n=$((n+1))
 done
 
@@ -129,20 +132,21 @@ echo "[Config] mediamtx.yml written (${#CAM_STREAMS[@]} path(s))."
 
 # ---------------------------------------------------------------------------
 # Build FFmpeg argument array for a camera
-# Usage: build_ffmpeg_args /dev/video0 cam1
+# Usage: build_ffmpeg_args /dev/video0 cam1 [input_format]
 # Prints arguments one per line (caller reads into array)
 # ---------------------------------------------------------------------------
 
 build_ffmpeg_args() {
     local device="$1"
     local stream_path="$2"
+    local cam_fmt="${3:-$INPUT_FORMAT}"
 
     # Input
     echo "-f"
     echo "v4l2"
-    if [[ -n "$INPUT_FORMAT" ]]; then
+    if [[ -n "$cam_fmt" ]]; then
         echo "-input_format"
-        echo "$INPUT_FORMAT"
+        echo "$cam_fmt"
     fi
     echo "-thread_queue_size"
     echo "512"
@@ -248,7 +252,7 @@ for i in "${!CAM_DEVICES[@]}"; do
     log_out="$MEDIAMTX_DIR/ffmpeg-cam${n}-out.log"
     args_file="$(mktemp /tmp/ffmpeg-cam${n}-args.XXXXXX)"
 
-    build_ffmpeg_args "$dev" "$stream" > "$args_file"
+    build_ffmpeg_args "$dev" "$stream" "${CAM_INPUT_FORMATS[$i]}" > "$args_file"
     CAM_ARGS_FILES+=("$args_file")
     CAM_LOG_ERR+=("$log_err")
 
